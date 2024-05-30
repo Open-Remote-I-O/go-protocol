@@ -1,4 +1,4 @@
-module github.com/Open-Remote-I-O/go-protocol
+module github.com/Open-Remote-I-O/orio-go-protocol
 
 go 1.22.3
 
