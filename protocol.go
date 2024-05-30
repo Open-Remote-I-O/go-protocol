@@ -2,10 +2,12 @@ package goprotocol
 
 // NOTE: currently commented other protocol values in order to test basic implementation of the unmarshalling
 
+const headerByteSize = 8
+
 type Header struct {
-	Version uint16
-	// DeviceId   []byte //6 bytes length
-	// PayloadLen uint16
+	Version    uint16
+	DeviceId   uint32
+	PayloadLen uint16
 }
 
 type Data struct {
