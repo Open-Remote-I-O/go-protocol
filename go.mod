@@ -1,6 +1,6 @@
-module github.com/Open-Remote-I-O/go-protocol
+module github.com/Open-Remote-I-O/orio-go-protocol
 
-go 1.22.3
+go 1.22.4
 
 require github.com/stretchr/testify v1.9.0
 
