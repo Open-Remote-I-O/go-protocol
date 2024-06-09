@@ -6,24 +6,28 @@ package goprotocol
 
 const version = uint16(1)
 
-const headerByteSize = 8
+const (
+	headerByteSize     = 8
+	dataParamsByteSize = 3
+	initialChunkSize   = 128
+)
 
-// Header has all metadata needed before handling actual protocol data
-type Header struct {
+// OrioHeader has all metadata needed before handling actual protocol data
+type OrioHeader struct {
 	Version    uint16
 	DeviceID   uint32
 	PayloadLen uint16
 }
 
-// Data is the body sent with expected command and eventual data in order to give detail about command
-type Data struct {
-	// CommandId uint8
-	// Len       uint16
-	// Data      []byte
+// OrioData is the body sent with expected command and eventual data in order to give detail about command
+type OrioData struct {
+	CommandID uint8
+	Len       uint16
+	Data      []byte
 }
 
 // OrioPayload is the complete payload that a client will be sending to server
 type OrioPayload struct {
-	Header Header
-	// Data   Data
+	Header OrioHeader
+	Data   []OrioData
 }

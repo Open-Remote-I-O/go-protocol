@@ -14,59 +14,147 @@ import (
 )
 
 type testCase struct {
-	name          string
-	version       []byte
-	deviceID      []byte
-	payloadLen    []byte
-	expected      *OrioPayload
-	expectedError error
+	name                string
+	mockProtocolPayload *OrioPayload
+	expected            *OrioPayload
+	expectedError       error
 }
 
 func randUint16() uint16 {
 	return uint16(rand.UintN(math.MaxUint16))
 }
 
-func genMockProtocolParamBytes[T any](t testing.TB, val T) []byte {
+func generateMockProtocolBuffer(t testing.TB, val *OrioPayload) io.Reader {
 	var w bytes.Buffer
-	err := binary.Write(&w, binary.BigEndian, val)
-	if err != nil {
-		t.Fatalf("something went wrong while generating mock protocol buffer")
+	if val == nil {
+		return &w
 	}
-	return w.Bytes()
-}
 
-func generateMockProtocolBuffer(t testing.TB, tt testCase) io.Reader {
-	var w bytes.Buffer
-	err := binary.Write(&w, binary.BigEndian, tt.version)
+	// Write header fields
+	err := binary.Write(&w, binary.BigEndian, val.Header.Version)
 	if err != nil {
-		t.Fatalf("something went wrong while generating mock protocol buffer")
+		t.Fatalf("error writing header version: %v", err)
 	}
-	err = binary.Write(&w, binary.BigEndian, tt.deviceID)
+	err = binary.Write(&w, binary.BigEndian, val.Header.DeviceID)
 	if err != nil {
-		t.Fatalf("something went wrong while generating mock protocol request")
+		t.Fatalf("error writing header device ID: %v", err)
 	}
-	err = binary.Write(&w, binary.BigEndian, tt.payloadLen)
+	err = binary.Write(&w, binary.BigEndian, val.Header.PayloadLen)
 	if err != nil {
-		t.Fatalf("something went wrong while generating mock protocol request")
+		t.Fatalf("error writing header payload length: %v", err)
 	}
+
+	// Write each OrioData element
+	for _, dataItem := range val.Data {
+		err = binary.Write(&w, binary.BigEndian, uint8(dataItem.CommandID))
+		if err != nil {
+			t.Fatalf("error writing OrioData command ID: %v", err)
+		}
+		err = binary.Write(&w, binary.BigEndian, uint16(dataItem.Len))
+		if err != nil {
+			t.Fatalf("error writing OrioData data length: %v", err)
+		}
+		err = binary.Write(&w, binary.BigEndian, dataItem.Data)
+		if err != nil {
+			t.Fatalf("error writing OrioData data: %v", err)
+		}
+	}
+
 	return &w
 }
 
 func Test_Unmarshal(t *testing.T) {
 	tests := []testCase{
 		{
-			name:          "ok",
-			version:       genMockProtocolParamBytes(t, version),
-			deviceID:      genMockProtocolParamBytes(t, uint32(10)),
-			payloadLen:    genMockProtocolParamBytes(t, uint16(100)),
-			expected:      &OrioPayload{Header: Header{Version: version, DeviceID: 10, PayloadLen: 100}},
+			name: "ok",
+			mockProtocolPayload: &OrioPayload{
+				Header: OrioHeader{
+					Version:    version,
+					DeviceID:   uint32(10),
+					PayloadLen: uint16(1),
+				},
+				Data: []OrioData{{
+					CommandID: uint8(10),
+					Len:       uint16(1),
+					Data:      []byte{0xAA},
+				}},
+			},
+			expected: &OrioPayload{
+				Header: OrioHeader{Version: version, DeviceID: 10, PayloadLen: 1},
+				Data: []OrioData{{
+					CommandID: uint8(10),
+					Len:       uint16(1),
+					Data:      []byte{0xAA},
+				}},
+			},
+			expectedError: nil,
+		},
+		{
+			name: "ok multiple data payload",
+			mockProtocolPayload: &OrioPayload{
+				Header: OrioHeader{
+					Version:    version,
+					DeviceID:   uint32(10),
+					PayloadLen: uint16(3),
+				},
+				Data: []OrioData{
+					{
+						CommandID: uint8(10),
+						Len:       uint16(1),
+						Data:      []byte{0xAA},
+					},
+					{
+						CommandID: uint8(10),
+						Len:       uint16(1),
+						Data:      []byte{0xAA},
+					},
+					{
+						CommandID: uint8(10),
+						Len:       uint16(1),
+						Data:      []byte{0xAA},
+					},
+				},
+			},
+			expected: &OrioPayload{
+				Header: OrioHeader{Version: version, DeviceID: 10, PayloadLen: 3},
+				Data: []OrioData{
+					{
+						CommandID: uint8(10),
+						Len:       uint16(1),
+						Data:      []byte{0xAA},
+					},
+					{
+						CommandID: uint8(10),
+						Len:       uint16(1),
+						Data:      []byte{0xAA},
+					},
+					{
+						CommandID: uint8(10),
+						Len:       uint16(1),
+						Data:      []byte{0xAA},
+					},
+				},
+			},
+			expectedError: nil,
+		},
+		{
+			name: "ok no data sent",
+			mockProtocolPayload: &OrioPayload{
+				Header: OrioHeader{
+					Version:    version,
+					DeviceID:   uint32(10),
+					PayloadLen: uint16(0),
+				},
+				Data: nil,
+			},
+			expected: &OrioPayload{
+				Header: OrioHeader{Version: version, DeviceID: 10, PayloadLen: 0},
+				Data:   nil,
+			},
 			expectedError: nil,
 		},
 		{
 			name:          "invalid header format passed",
-			version:       []byte{},
-			deviceID:      nil,
-			payloadLen:    nil,
 			expected:      nil,
 			expectedError: fmt.Errorf("%s: %w", errors.ErrHeaderFormat, io.EOF),
 		},
@@ -74,8 +162,8 @@ func Test_Unmarshal(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockVal := generateMockProtocolBuffer(t, tt)
-			res, err := Unmarshal(mockVal)
+			mockVal2 := generateMockProtocolBuffer(t, tt.mockProtocolPayload)
+			res, err := Unmarshal(mockVal2)
 			if err != nil {
 				assert.Equal(t, tt.expectedError, err)
 				return
@@ -88,19 +176,53 @@ func Test_Unmarshal(t *testing.T) {
 // TODO: learn more about fuzzing and best practices
 func Fuzz_Unmarshal(f *testing.F) {
 	// init fuzz corpus values
+	var fuzzCorpusReaders []io.Reader
+	fuzzCorpusVals := []*OrioPayload{
+		{
+			Header: OrioHeader{Version: version, DeviceID: 10, PayloadLen: 1},
+			Data: []OrioData{{
+				CommandID: uint8(10),
+				Len:       uint16(1),
+				Data:      []byte{0xAA},
+			}},
+		},
+		{
+			Header: OrioHeader{Version: version, DeviceID: 10, PayloadLen: 0},
+			Data:   nil,
+		},
+		{
+			Header: OrioHeader{Version: version, DeviceID: 10, PayloadLen: 3},
+			Data: []OrioData{
+				{
+					CommandID: uint8(10),
+					Len:       uint16(1),
+					Data:      []byte{0xAA},
+				},
+				{
+					CommandID: uint8(10),
+					Len:       uint16(1),
+					Data:      []byte{0xAA},
+				},
+				{
+					CommandID: uint8(10),
+					Len:       uint16(1),
+					Data:      []byte{0xAA},
+				},
+			},
+		},
+	}
 
-	validHeaderValReader := generateMockProtocolBuffer(f, testCase{
-		version:    genMockProtocolParamBytes(f, version),
-		deviceID:   genMockProtocolParamBytes(f, uint32(10)),
-		payloadLen: genMockProtocolParamBytes(f, uint16(100)),
-	})
-	validHeaderVal, err := io.ReadAll(validHeaderValReader)
+	for _, v := range fuzzCorpusVals {
+		fuzzCorpusReaders = append(fuzzCorpusReaders, generateMockProtocolBuffer(f, v))
+	}
+	r := io.MultiReader(fuzzCorpusReaders...)
+	validHeaderVal, err := io.ReadAll(r)
 	if err != nil {
 		f.Errorf("unexpected error while generating fuzz corpus")
 	}
 
 	fuzzCorpus := [][]byte{validHeaderVal}
-
+	fmt.Println(fuzzCorpus)
 	for _, v := range fuzzCorpus {
 		f.Add(v)
 	}
@@ -121,11 +243,11 @@ func generateRandomMockProtocolBuffer(t testing.TB) io.Reader {
 	}
 	err = binary.Write(&w, binary.BigEndian, rand.Uint32())
 	if err != nil {
-		t.Fatalf("something went wrong while generating mock protocol request")
+		t.Fatalf("something went wrong while generating mock protocol buffer")
 	}
 	err = binary.Write(&w, binary.BigEndian, randUint16())
 	if err != nil {
-		t.Fatalf("something went wrong while generating mock protocol request")
+		t.Fatalf("something went wrong while generating mock protocol buffer")
 	}
 	return &w
 }

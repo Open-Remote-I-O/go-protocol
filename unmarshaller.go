@@ -32,18 +32,8 @@ func checkValidLen(n int, buffrd *bufio.Reader) error {
 	return nil
 }
 
-// Unmarshal Validates if r != EOF and has necessary bytes for each struct parameter and then
-// deserialize the provided reader into the protocol payload struct
-func Unmarshal(r io.Reader) (*OrioPayload, error) {
-	var protocolHeader Header
-	buffrdHeader := bufio.NewReaderSize(r, headerByteSize)
-	err := checkValidLen(headerByteSize, buffrdHeader)
-	if err != nil {
-		if err == io.EOF {
-			return nil, errors.ErrHeaderFormatEOF
-		}
-		return nil, fmt.Errorf("%s: %w", errors.ErrHeaderFormat, err)
-	}
+func parseOrioHeader(buffrdHeader io.Reader) (*OrioHeader, error) {
+	var protocolHeader OrioHeader
 	headerVersion, err := readBytes(buffrdHeader, 2)
 	if err != nil {
 		return nil, fmt.Errorf("error reading version bytes: %w", err)
@@ -70,8 +60,63 @@ func Unmarshal(r io.Reader) (*OrioPayload, error) {
 	if err := binary.Read(payloadLen, binary.BigEndian, &protocolHeader.PayloadLen); err != nil {
 		return nil, fmt.Errorf("error decoding length: %w", err)
 	}
+	return &protocolHeader, nil
+}
+
+func parseOrioData(dataReader io.Reader, dataAmount uint16) (*[]OrioData, error) {
+	var protocolData []OrioData
+	for range dataAmount {
+		var data OrioData
+
+		if err := binary.Read(dataReader, binary.BigEndian, &data.CommandID); err != nil {
+			return nil, fmt.Errorf("error decoding length: %w", err)
+		}
+
+		if err := binary.Read(dataReader, binary.BigEndian, &data.Len); err != nil {
+			return nil, fmt.Errorf("error decoding length: %w", err)
+		}
+		data.Data = make([]byte, data.Len)
+		if err := binary.Read(dataReader, binary.BigEndian, &data.Data); err != nil {
+			return nil, fmt.Errorf("error decoding length: %w", err)
+		}
+
+		protocolData = append(protocolData, data)
+	}
+
+	return &protocolData, nil
+}
+
+// Unmarshal Validates if r != EOF and has necessary bytes for each struct parameter and then
+// deserialize the provided reader into the protocol payload struct
+func Unmarshal(r io.Reader) (*OrioPayload, error) {
+	buffrdHeader := bufio.NewReaderSize(r, headerByteSize+initialChunkSize)
+	err := checkValidLen(headerByteSize, buffrdHeader)
+	if err != nil {
+		if err == io.EOF {
+			return nil, errors.ErrHeaderFormatEOF
+		}
+		return nil, fmt.Errorf("%s: %w", errors.ErrHeaderFormat, err)
+	}
+	parsedHeader, err := parseOrioHeader(buffrdHeader)
+	if err != nil {
+		return nil, err
+	}
+
+	err = checkValidLen(int(parsedHeader.PayloadLen), buffrdHeader)
+	if err != nil {
+		if err == io.EOF {
+			return nil, errors.ErrDataLenEOF
+		}
+		return nil, fmt.Errorf("%s: %w", errors.ErrDataLen, err)
+	}
+
+	parsedData, err := parseOrioData(buffrdHeader, parsedHeader.PayloadLen)
+	if err != nil {
+		return nil, err
+	}
 
 	return &OrioPayload{
-		Header: protocolHeader,
+		Header: *parsedHeader,
+		Data:   *parsedData,
 	}, nil
 }
